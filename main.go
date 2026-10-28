@@ -8,6 +8,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +34,7 @@ func send(hosts []string, helo, from, to string, msg []byte, attempts int, base 
 	var err error
 	for i := 0; i < attempts; i++ {
 		for _, h := range hosts {
+			limiterFor(h).wait()
 			err = deliver(h, helo, from, to, msg)
 			v := classify(err)
 			log.Printf("intento %d via %s -> %s %v", i+1, h, v, err)
@@ -48,23 +51,36 @@ func send(hosts []string, helo, from, to string, msg []byte, attempts int, base 
 
 func main() {
 	from := flag.String("from", "cartero@localhost", "remitente")
-	to := flag.String("to", "", "destinatario")
+	to := flag.String("to", "", "destinatarios separados por coma")
 	relay := flag.String("relay", "localhost:1025", "host:puerto fijo (Mailpit); vacío = resolver MX")
 	flag.Parse()
 	if *to == "" {
 		log.Fatal("falta -to")
 	}
 
-	hosts := []string{*relay}
-	if *relay == "" {
-		hosts = mxHosts((*to)[strings.LastIndex(*to, "@")+1:])
+	// Todos en paralelo: el límite por proveedor es lo único que los espacia.
+	var wg sync.WaitGroup
+	var failed atomic.Bool
+	for _, rcpt := range strings.Split(*to, ",") {
+		rcpt := strings.TrimSpace(rcpt)
+		hosts := []string{*relay}
+		if *relay == "" {
+			hosts = mxHosts(rcpt[strings.LastIndex(rcpt, "@")+1:])
+		}
+		msg := fmt.Sprintf("From: <%s>\r\nTo: <%s>\r\nSubject: Hola desde cartero\r\nDate: %s\r\n\r\nPrimer correo de cartero.\r\n",
+			*from, rcpt, time.Now().Format(time.RFC1123Z))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := send(hosts, "localhost", *from, rcpt, []byte(msg), 4, time.Second)
+			fmt.Printf("%s: %s\n", rcpt, v)
+			if err != nil {
+				failed.Store(true)
+			}
+		}()
 	}
-	msg := fmt.Sprintf("From: <%s>\r\nTo: <%s>\r\nSubject: Hola desde cartero\r\nDate: %s\r\n\r\nPrimer correo de cartero.\r\n",
-		*from, *to, time.Now().Format(time.RFC1123Z))
-
-	v, err := send(hosts, "localhost", *from, *to, []byte(msg), 4, time.Second)
-	fmt.Println("resultado:", v)
-	if err != nil {
+	wg.Wait()
+	if failed.Load() {
 		os.Exit(1)
 	}
 }

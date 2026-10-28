@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -101,5 +102,34 @@ func TestSendStopsOnHard(t *testing.T) {
 	v, _ := send([]string{addr}, "test", "a@x.test", "b@y.test", []byte("hola\r\n"), 4, time.Millisecond)
 	if v != Hard {
 		t.Fatalf("got %s, want duro", v)
+	}
+}
+
+func TestProvider(t *testing.T) {
+	cases := map[string]string{
+		"gmail-smtp-in.l.google.com:25":        "gmail",
+		"aspmx.l.google.com:25":                "gmail",
+		"uc-cl.mail.protection.outlook.com:25": "outlook",
+		"mta5.am0.yahoodns.net:25":             "yahoo",
+		"localhost:1025":                       "otros",
+	}
+	for in, want := range cases {
+		if got := provider(in); got != want {
+			t.Errorf("%s: got %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestLimiterSpacesCalls(t *testing.T) {
+	l := &limiter{every: 20 * time.Millisecond}
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ { // 5 en paralelo: el último sale 4 turnos después
+		wg.Add(1)
+		go func() { defer wg.Done(); l.wait() }()
+	}
+	wg.Wait()
+	if d := time.Since(start); d < 80*time.Millisecond {
+		t.Fatalf("5 llamadas en %v; el límite no espació", d)
 	}
 }
