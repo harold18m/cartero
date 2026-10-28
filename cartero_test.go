@@ -133,3 +133,31 @@ func TestLimiterSpacesCalls(t *testing.T) {
 		t.Fatalf("5 llamadas en %v; el límite no espació", d)
 	}
 }
+
+func TestAIMD(t *testing.T) {
+	l := &limiter{base: 100 * time.Millisecond, every: 100 * time.Millisecond}
+	l.slowDown()
+	l.slowDown()
+	if l.interval() != 400*time.Millisecond {
+		t.Fatalf("dos frenos deben dejar 400ms, quedó %v", l.interval())
+	}
+	for i := 0; i < 100; i++ {
+		l.speedUp()
+	}
+	if l.interval() != l.base {
+		t.Fatalf("debe volver al base y no bajar de ahí, quedó %v", l.interval())
+	}
+}
+
+func TestSendSlowsDownOn47(t *testing.T) {
+	addr := fakeServer(t, 1, "421 4.7.0 try again later")
+	l := limiterFor(addr)
+	before := l.interval()
+	v, err := send([]string{addr}, "test", "a@x.test", "b@y.test", []byte("hola\r\n"), 4, time.Millisecond)
+	if v != Delivered || err != nil {
+		t.Fatalf("debió entregar tras el 4.7.0: %s %v", v, err)
+	}
+	if l.interval() <= before {
+		t.Fatalf("el intervalo debió subir tras el 4.7.0: antes %v, ahora %v", before, l.interval())
+	}
+}

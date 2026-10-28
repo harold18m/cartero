@@ -32,3 +32,9 @@ func classify(err error) Verdict {
 	}
 	return Hard
 }
+
+// isTemp dice si el servidor pidió reintentar (4xx) en vez de rechazar (5xx).
+func isTemp(err error) bool {
+	e, ok := err.(*SMTPError)
+	return ok && e.Code/100 == 4
+}

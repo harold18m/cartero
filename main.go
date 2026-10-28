@@ -34,10 +34,21 @@ func send(hosts []string, helo, from, to string, msg []byte, attempts int, base 
 	var err error
 	for i := 0; i < attempts; i++ {
 		for _, h := range hosts {
-			limiterFor(h).wait()
+			l := limiterFor(h)
+			l.wait()
 			err = deliver(h, helo, from, to, msg)
 			v := classify(err)
 			log.Printf("intento %d via %s -> %s %v", i+1, h, v, err)
+			if v == Delivered {
+				l.speedUp()
+			}
+			// 4.7.x = "vas muy rápido": frenar a todo el proveedor y reintentar.
+			// Un 5.7.x es un rechazo definitivo y cae en el return de abajo.
+			if v == Reputation && isTemp(err) {
+				l.slowDown()
+				log.Printf("%s nos frena: intervalo ahora %v", provider(h), l.interval())
+				continue
+			}
 			if v != Temporary {
 				return v, err
 			}
